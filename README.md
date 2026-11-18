@@ -93,6 +93,16 @@ python scraper/build_kb.py && python scripts/build_index.py
 uvicorn app.main:app --port 7860
 ```
 
+## Deployment
+
+The live demo runs on **Render** (free web service, Docker runtime) from [`render.yaml`](render.yaml). The image uses about 265 MB of RAM under load, which fits the free plan's 512 MB.
+
+To deploy your own copy:
+1. In Render, go to **New → Blueprint** and select this repo.
+2. Set `OPENROUTER_API_KEY` when prompted.
+
+> The free plan puts the service to sleep after about 15 minutes of inactivity. The first request after that takes roughly a minute while the container starts.
+
 ## Project layout
 
 ```
