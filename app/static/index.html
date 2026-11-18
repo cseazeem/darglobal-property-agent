@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DarGlobal × Wasalt Property Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f4ef; --panel: #ffffff; --ink: #1d1c1a; --muted: #6d6a63; --line: #e4e0d6;
+    --accent: #8a6d3b; --accent-ink: #ffffff; --user: #1d1c1a; --user-ink: #f6f4ef;
+    --chip: #efebe2; --code: #f1eee7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121212; --panel: #1b1b1a; --ink: #ecebe7; --muted: #9c998f; --line: #2c2b28;
+      --accent: #c9a96a; --accent-ink: #121212; --user: #ecebe7; --user-ink: #121212;
+      --chip: #24231f; --code: #24231f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.55 Inter, system-ui, -apple-system, Segoe UI, sans-serif; }
+  .app { max-width: 880px; margin: 0 auto; height: 100%; display: flex; flex-direction: column; padding: 0 16px; }
+  header { padding: 20px 0 12px; border-bottom: 1px solid var(--line); }
+  h1 { font: 500 24px/1.2 "Playfair Display", Georgia, serif; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .stat { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+  .stat b { color: var(--ink); font-weight: 600; }
+  main { flex: 1; overflow-y: auto; padding: 18px 0; }
+  .msg { display: flex; margin: 10px 0; }
+  .msg.user { justify-content: flex-end; }
+  .bubble { max-width: 88%; padding: 11px 14px; border-radius: 14px; overflow-wrap: anywhere; }
+  .user .bubble { background: var(--user); color: var(--user-ink); border-bottom-right-radius: 4px; white-space: pre-wrap; }
+  .bot .bubble { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .bot .bubble p { margin: 0 0 8px; } .bot .bubble p:last-child { margin-bottom: 0; }
+  .bot .bubble a { color: var(--accent); }
+  .bot .bubble table { border-collapse: collapse; font-size: 13px; margin: 6px 0; display: block; overflow-x: auto; }
+  .bot .bubble th, .bot .bubble td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; }
+  .bot .bubble code { background: var(--code); padding: 1px 4px; border-radius: 4px; font-size: 13px; }
+  .bot .bubble ul, .bot .bubble ol { padding-left: 20px; margin: 4px 0 8px; }
+  details.trace { margin-top: 10px; font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
+  details.trace summary { cursor: pointer; }
+  .step { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 4px 0; overflow-wrap: anywhere; }
+  .step b { color: var(--accent); font-weight: 600; }
+  .welcome { color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .chip { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px;
+          padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+  .chip:hover { border-color: var(--accent); }
+  .typing { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font-size: 13px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: b 1.2s infinite; }
+  .dot:nth-child(2) { animation-delay: .15s } .dot:nth-child(3) { animation-delay: .3s }
+  @keyframes b { 0%,80%,100% { opacity: .25 } 40% { opacity: 1 } }
+  form { display: flex; gap: 8px; padding: 12px 0 18px; border-top: 1px solid var(--line); }
+  textarea { flex: 1; resize: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+             border-radius: 12px; padding: 11px 13px; font: inherit; min-height: 46px; max-height: 160px; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button.send { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 12px;
+                padding: 0 18px; font: 600 14px Inter, sans-serif; cursor: pointer; }
+  button.send:disabled { opacity: .5; cursor: default; }
+  .foot { color: var(--muted); font-size: 11px; text-align: center; padding-bottom: 10px; margin-top: -10px; }
+  @media (max-width: 520px) { h1 { font-size: 20px; } .bubble { max-width: 96%; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>DarGlobal <span>×</span> Wasalt Property Agent</h1>
+    <div class="sub">An agentic assistant over public data from darglobal.co.uk and wasalt.sa. It plans, calls tools (RAG search, listing filters, market stats) and cites sources.</div>
+    <div class="stats" id="stats"></div>
+  </header>
+  <main id="chat">
+    <div class="msg bot"><div class="bubble welcome">
+      Ask about DarGlobal's luxury developments (Dubai, Jeddah, Riyadh, Oman, Qatar, London, Spain…) or Saudi property listings on Wasalt. English or Arabic.
+      <div class="chips" id="chips"></div>
+    </div></div>
+  </main>
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="e.g. 3-bedroom apartments for rent in North Riyadh under 70k SAR" autofocus></textarea>
+    <button class="send" id="send" type="submit">Send</button>
+  </form>
+  <div class="foot">Data is a snapshot and may be outdated · Not financial advice · Answers generated by a free OpenRouter model</div>
+</div>
+<script>
+const SUGGESTIONS = [
+  "Which DarGlobal projects are in Saudi Arabia?",
+  "Tell me about Trump International Hotel & Tower Dubai — unit sizes and handover date",
+  "Compare The Astera and Da Vinci Tower",
+  "Find 3-bedroom apartments for rent in Riyadh under 70,000 SAR",
+  "What is the median villa price in Jeddah by district?",
+  "ما هي مشاريع دار جلوبال في عُمان؟",
+];
+const chat = document.getElementById('chat'), form = document.getElementById('form'),
+      input = document.getElementById('input'), send = document.getElementById('send');
+const history = [];
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function scroll() { chat.scrollTop = chat.scrollHeight; }
+function add(role, html) {
+  const m = document.createElement('div'); m.className = 'msg ' + role;
+  const b = document.createElement('div'); b.className = 'bubble'; b.innerHTML = html;
+  m.appendChild(b); chat.appendChild(m); scroll(); return b;
+}
+function render(md) {
+  const html = DOMPurify.sanitize(marked.parse(md || ''));
+  const t = document.createElement('div'); t.innerHTML = html;
+  t.querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  return t.innerHTML;
+}
+function traceHtml(r) {
+  if (!r.trace || !r.trace.length) return '';
+  const steps = r.trace.map((s, i) =>
+    `<div class="step">${i + 1}. <b>${esc(s.tool)}</b>(${esc(JSON.stringify(s.args))}) → ${esc(s.summary || '')}</div>`).join('');
+  return `<details class="trace"><summary>Agent trace · ${r.trace.length} tool call${r.trace.length > 1 ? 's' : ''} · ${esc(r.model || '')} · ${r.seconds ?? '?'}s</summary>${steps}</details>`;
+}
+
+async function ask(text) {
+  text = text.trim(); if (!text) return;
+  add('user', esc(text)); input.value = ''; input.style.height = '';
+  send.disabled = true;
+  const pending = add('bot', '<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Thinking & calling tools…</span>');
+  try {
+    const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                           body: JSON.stringify({ message: text, history }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    pending.innerHTML = render(data.answer) + traceHtml(data);
+    history.push({ role: 'user', content: text }, { role: 'assistant', content: data.answer });
+  } catch (e) {
+    pending.innerHTML = `<span style="color:#b4442f">⚠️ ${esc(e.message)}</span>`;
+  } finally { send.disabled = false; input.focus(); scroll(); }
+}
+
+form.addEventListener('submit', e => { e.preventDefault(); ask(input.value); });
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
+input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; });
+const chips = document.getElementById('chips');
+SUGGESTIONS.forEach(s => { const c = document.createElement('button'); c.type = 'button'; c.className = 'chip';
+  c.textContent = s; c.onclick = () => ask(s); chips.appendChild(c); });
+
+fetch('/api/meta').then(r => r.json()).then(m => {
+  document.getElementById('stats').innerHTML =
+    `<span class="stat"><b>${m.projects}</b> DarGlobal projects</span>` +
+    `<span class="stat"><b>${m.listings}</b> Wasalt listings</span>` +
+    `<span class="stat"><b>${m.chunks}</b> indexed passages</span>` +
+    `<span class="stat">Snapshot <b>${m.snapshot}</b></span>` +
+    `<span class="stat">Model <b>${esc(m.models[0])}</b></span>`;
+}).catch(() => {});
+</script>
+</body>
+</html>

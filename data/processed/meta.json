@@ -1,0 +1,32 @@
+{
+ "snapshot": "2026-11-18",
+ "n_projects": 43,
+ "n_listings": 624,
+ "n_chunks": 1341,
+ "darglobal_pages": 174,
+ "wasalt_cities": [
+  "Al Khobar",
+  "Dammam",
+  "Jeddah",
+  "Khamis Mushait",
+  "Madinah",
+  "Makkah",
+  "Riyadh"
+ ],
+ "listing_counts": {
+  "Dammam|rent": 30,
+  "Riyadh|sale": 75,
+  "Riyadh|rent": 65,
+  "Jeddah|sale": 85,
+  "Jeddah|rent": 60,
+  "Makkah|sale": 46,
+  "Madinah|sale": 50,
+  "Khamis Mushait|sale": 30,
+  "Al Khobar|sale": 29,
+  "Dammam|sale": 30,
+  "Madinah|rent": 44,
+  "Khamis Mushait|rent": 21,
+  "Al Khobar|rent": 30,
+  "Makkah|rent": 29
+ }
+}
