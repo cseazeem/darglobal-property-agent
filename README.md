@@ -2,7 +2,7 @@
 
 An **agentic RAG chatbot** over publicly available data from [darglobal.co.uk](https://darglobal.co.uk) and [wasalt.sa](https://wasalt.sa). It answers questions about DarGlobal's branded luxury developments and Saudi property listings. It plans which tools to call, runs them, reads the results, and cites its sources.
 
-**Live demo:** _URL added after deployment_
+**Live demo:** https://darglobal-property-agent.onrender.com (free tier: the first request after an idle period can take about a minute while the container starts)
 
 | | |
 |---|---|
