@@ -76,13 +76,14 @@ So the model gets typed tools for each case and picks between them. Aggregate qu
 - **Grounding.** The system prompt requires a tool call before any factual answer, answers only from tool output, and markdown source links. The model must say "I don't know" when the data has no answer.
 - **Data hygiene.** City names are normalised (for example *Aldammam → Dammam*). Arabic articles are made equivalent for matching (*Al-Narjis ≈ An-Narjis*). Statistics use the IQR rule, so typos like a 13.8 billion SAR plot don't skew results.
 - **Per-IP rate limit** on the chat endpoints, so the public demo can't use up the free quota.
+- **Degraded mode when no LLM is available.** If every model fails, for example when the free daily quota is used up, the app still answers. Retrieval and all tools run locally, so a keyword router picks the right tool and the UI shows its results as formatted tables and snippets with source links, plus a friendly notice. A circuit breaker skips the LLM until the quota resets at 00:00 UTC, so these answers come back instantly instead of after three failed calls.
 - **Tolerant tool-call parsing.** When streaming, some providers emit tool calls as text (`<tool_call><function=...>`) instead of structured `tool_calls`. The agent recognises that markup, runs the tools, and never shows the raw markup to the user.
 
 ## Evaluation
 
 Evaluation runs at two levels.
 
-**1. Deterministic tests: [`tests/test_tools.py`](tests/test_tools.py), run in CI on every push.** There are 26 tests and none of them call the LLM. They cover:
+**1. Deterministic tests: [`tests/test_tools.py`](tests/test_tools.py), run in CI on every push.** There are 33 tests and none of them call the LLM. They cover:
 - data quality, including that no personal data was collected
 - project-name matching
 - listing filters, and Arabic-article and city-alias normalisation
@@ -92,6 +93,7 @@ Evaluation runs at two levels.
 - lead-draft validation
 - retrieval quality
 - the text tool-call parser
+- degraded-mode routing and formatting
 
 **2. End-to-end agent eval: [`evals/run_eval.py`](evals/run_eval.py), against a golden set of 17 cases in [`evals/golden.jsonl`](evals/golden.jsonl).** Each case checks:
 

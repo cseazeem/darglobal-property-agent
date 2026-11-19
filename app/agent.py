@@ -27,7 +27,25 @@ from collections.abc import Iterator
 from openai import OpenAI
 
 from . import config
+from .fallback import fallback_answer
 from .tools import TOOL_SCHEMAS, run_tool
+
+# Circuit breaker: once the free daily quota is hit, skip the LLM until 00:00 UTC
+# (avoids three failing round-trips per request) and answer in degraded mode.
+_quota_blocked_until = 0.0
+
+
+class AllModelsFailed(RuntimeError):
+    pass
+
+
+def _is_quota_error(msg: str) -> bool:
+    return "free-models-per-day" in msg or "quota" in msg.lower()
+
+
+def _next_utc_midnight() -> float:
+    now = time.time()
+    return now - (now % 86400) + 86400
 
 log = logging.getLogger("agent")
 
@@ -112,7 +130,7 @@ def _stream_completion(client: OpenAI, messages: list[dict], models: list[str], 
         except Exception as e:  # rate limit, provider error, unsupported tools, ...
             last_err = e
         log.warning("model %s failed: %s", model, str(last_err)[:200])
-    raise RuntimeError(f"All models failed. Last error: {last_err}")
+    raise AllModelsFailed(str(last_err))
 
 
 _TEXT_CALL = re.compile(r"<tool_call>(.*?)(?:</tool_call>|$)", re.S)
@@ -157,7 +175,19 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
     client = _client()
     models = list(config.OPENROUTER_MODELS)
     trace: list[dict] = []
+    tool_results: list[tuple[str, dict]] = []
     model_used = None
+
+    def degraded(quota: bool):
+        answer = fallback_answer(question, tool_results, quota)
+        yield {"type": "token", "text": answer}
+        yield {"type": "done", "answer": answer, "trace": trace, "model": "degraded mode (no LLM)",
+               "seconds": round(time.time() - t0, 1), "degraded": True}
+
+    global _quota_blocked_until
+    if time.time() < _quota_blocked_until:
+        yield from degraded(quota=True)
+        return
 
     try:
         for step in range(config.MAX_AGENT_STEPS):
@@ -245,11 +275,19 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
                 yield {"type": "step_done", "tool": c["name"], "summary": summary}
                 if c["name"] == "draft_interest_registration" and result.get("draft"):
                     yield {"type": "lead_draft", "draft": result["draft"]}
+                tool_results.append((c["name"], result))
                 messages.append({"role": "tool", "tool_call_id": c["id"],
                                  "content": json.dumps(result, ensure_ascii=False)[:12000]})
+    except AllModelsFailed as e:
+        quota = _is_quota_error(str(e))
+        if quota:
+            _quota_blocked_until = _next_utc_midnight()
+        log.warning("all models failed (quota=%s): %s", quota, str(e)[:200])
+        yield {"type": "discard"}
+        yield from degraded(quota)
     except Exception as e:
         log.exception("agent failed")
-        yield {"type": "error", "message": f"The language model is unavailable right now ({e}). Please retry."}
+        yield {"type": "error", "message": "Something went wrong while answering. Please retry in a moment."}
 
 
 def run_agent(question: str, history: list[dict], meta: dict) -> dict:

@@ -144,3 +144,24 @@ def test_rental_yield_all_cities_in_one_call():
     assert len(r["by_city"]) >= 5
     ylds = [v["gross_yield_pct"] for v in r["by_city"].values()]
     assert ylds == sorted(ylds, reverse=True)
+
+
+# ---------------------------------------------------------------- degraded mode (no LLM)
+
+@pytest.mark.parametrize("question,tool", [
+    ("Which DarGlobal projects are in Oman?", "list_darglobal_projects"),
+    ("ما هي مشاريع دار جلوبال في عُمان؟", "list_darglobal_projects"),
+    ("Tell me about Trump International Hotel & Tower Dubai", "get_darglobal_project"),
+    ("Find 3-bedroom apartments for rent in Riyadh", "search_wasalt_listings"),
+    ("Which Saudi city has the best rental yield?", "wasalt_rental_yield"),
+    ("What is the partnership between DarGlobal and Wasalt?", "search_knowledge"),
+])
+def test_degraded_mode_routing(question, tool):
+    from app.fallback import _route
+    assert _route(question)[0][0] == tool
+
+
+def test_degraded_answer_is_grounded_and_friendly():
+    from app.fallback import fallback_answer
+    a = fallback_answer("Which DarGlobal projects are in Oman?", [], quota=True)
+    assert "resets at 00:00 UTC" in a and "darglobal.co.uk" in a and "openrouter" not in a.lower()
