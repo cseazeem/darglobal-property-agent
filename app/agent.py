@@ -181,8 +181,8 @@ def _parse_text_tool_calls(text: str) -> list[dict]:
 
 def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator[dict]:
     t0 = time.time()
-    if not config.OPENROUTER_API_KEY:
-        yield {"type": "error", "message": "Server is missing OPENROUTER_API_KEY."}
+    if not _providers():
+        yield {"type": "error", "message": "Server has no LLM provider configured (set OPENROUTER_API_KEY)."}
         return
 
     messages = _build_messages(question, history, meta)
@@ -240,6 +240,10 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
                         c["name"] += tc.function.name
                     if tc.function and tc.function.arguments:
                         c["args"] += tc.function.arguments
+                    # Gemini 3 attaches a thought_signature that must be echoed back with the call
+                    extra = (tc.model_extra or {}).get("extra_content")
+                    if extra:
+                        c["extra"] = extra
 
             for chunk in [first]:
                 ev = consume(chunk)
@@ -273,7 +277,8 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
             messages.append({
                 "role": "assistant", "content": text,
                 "tool_calls": [{"id": c["id"], "type": "function",
-                                "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                                "function": {"name": c["name"], "arguments": c["args"] or "{}"},
+                                **({"extra_content": c["extra"]} if c.get("extra") else {})}
                                for c in ordered],
             })
             for c in ordered:
