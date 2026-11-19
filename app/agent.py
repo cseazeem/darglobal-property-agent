@@ -30,7 +30,7 @@ from . import config
 from .fallback import fallback_answer
 from .tools import TOOL_SCHEMAS, run_tool
 
-# Circuit breaker: once the free daily quota is hit, skip the LLM until 00:00 UTC
+# Circuit breaker: once the free daily quota is hit, skip the LLM for 10 minutes
 # (avoids three failing round-trips per request) and answer in degraded mode.
 _quota_blocked_until = 0.0
 
@@ -43,9 +43,10 @@ def _is_quota_error(msg: str) -> bool:
     return "free-models-per-day" in msg or "quota" in msg.lower()
 
 
-def _next_utc_midnight() -> float:
+def _next_retry() -> float:
+    # Re-probe the LLM every 10 minutes (credits may be added), but never past the 00:00 UTC reset.
     now = time.time()
-    return now - (now % 86400) + 86400
+    return min(now + 600, now - (now % 86400) + 86400)
 
 log = logging.getLogger("agent")
 
@@ -281,7 +282,7 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
     except AllModelsFailed as e:
         quota = _is_quota_error(str(e))
         if quota:
-            _quota_blocked_until = _next_utc_midnight()
+            _quota_blocked_until = _next_retry()
         log.warning("all models failed (quota=%s): %s", quota, str(e)[:200])
         yield {"type": "discard"}
         yield from degraded(quota)
