@@ -30,9 +30,10 @@ from . import config
 from .fallback import fallback_answer
 from .tools import TOOL_SCHEMAS, run_tool
 
-# Circuit breaker: once the free daily quota is hit, skip the LLM for 10 minutes
-# (avoids three failing round-trips per request) and answer in degraded mode.
-_quota_blocked_until = 0.0
+# Per-provider circuit breaker: once a provider's free daily quota is hit, skip it for
+# 10 minutes (avoids failing round-trips on every request). If every provider is blocked,
+# the app answers in degraded mode from local tools.
+_blocked_until: dict[str, float] = {}
 
 
 class AllModelsFailed(RuntimeError):
@@ -87,15 +88,21 @@ Rules:
 """
 
 
-def _client() -> OpenAI:
-    return OpenAI(
-        base_url=config.OPENROUTER_BASE_URL,
-        api_key=config.OPENROUTER_API_KEY or "missing",
-        timeout=config.REQUEST_TIMEOUT,
-        max_retries=0,  # fail fast on 429 and fall through to the next model
-        # HTTP headers must be ASCII (APP_TITLE contains "×")
-        default_headers={"X-Title": "DarGlobal x Wasalt Property Agent"},
-    )
+def _providers() -> list[tuple[str, OpenAI, list[str]]]:
+    """OpenRouter free models first (primary); an optional OpenAI-compatible backup provider
+    (e.g. Groq or Gemini free tier) is used only when OpenRouter is rate-limited or down."""
+    common = dict(timeout=config.REQUEST_TIMEOUT, max_retries=0)  # fail fast, fall through
+    out = []
+    if config.OPENROUTER_API_KEY:
+        out.append(("openrouter", OpenAI(base_url=config.OPENROUTER_BASE_URL,
+                                         api_key=config.OPENROUTER_API_KEY,
+                                         # HTTP headers must be ASCII (APP_TITLE contains "×")
+                                         default_headers={"X-Title": "DarGlobal x Wasalt Property Agent"},
+                                         **common), list(config.OPENROUTER_MODELS)))
+    if config.BACKUP_API_KEY and config.BACKUP_BASE_URL and config.BACKUP_MODELS:
+        out.append(("backup", OpenAI(base_url=config.BACKUP_BASE_URL, api_key=config.BACKUP_API_KEY,
+                                     **common), list(config.BACKUP_MODELS)))
+    return out
 
 
 def _build_messages(question: str, history: list[dict], meta: dict) -> list[dict]:
@@ -109,14 +116,18 @@ def _build_messages(question: str, history: list[dict], meta: dict) -> list[dict
     return messages
 
 
-def _stream_completion(client: OpenAI, messages: list[dict], models: list[str], use_tools: bool):
-    """Open a streaming completion on the first model that works.
+def _stream_completion(candidates: list[tuple[str, OpenAI, str]], messages: list[dict],
+                       use_tools: bool):
+    """Open a streaming completion on the first (provider, model) that works.
 
-    Returns (model_used, first_chunk, stream_iterator). A model "works" once its first chunk
-    arrives, so rate limits / provider errors before any output fall through to the next model.
+    Returns ((provider, client, model), first_chunk, stream_iterator). A model "works" once its
+    first chunk arrives, so rate limits / provider errors before any output fall through.
     """
     last_err: Exception | None = None
-    for model in models:
+    for cand in candidates:
+        provider, client, model = cand
+        if time.time() < _blocked_until.get(provider, 0):
+            continue
         try:
             kwargs = {"tools": TOOL_SCHEMAS} if use_tools else {}
             stream = client.chat.completions.create(
@@ -125,12 +136,14 @@ def _stream_completion(client: OpenAI, messages: list[dict], models: list[str], 
             first = next(it)
             if getattr(first, "error", None):
                 raise RuntimeError(str(first.error))
-            return model, first, it
+            return cand, first, it
         except StopIteration:
             last_err = RuntimeError(f"empty stream from {model}")
         except Exception as e:  # rate limit, provider error, unsupported tools, ...
             last_err = e
-        log.warning("model %s failed: %s", model, str(last_err)[:200])
+        log.warning("%s model %s failed: %s", provider, model, str(last_err)[:200])
+        if _is_quota_error(str(last_err)):
+            _blocked_until[provider] = _next_retry()  # whole provider is out of quota
     raise AllModelsFailed(str(last_err))
 
 
@@ -173,8 +186,7 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
         return
 
     messages = _build_messages(question, history, meta)
-    client = _client()
-    models = list(config.OPENROUTER_MODELS)
+    candidates = [(name, client, m) for name, client, models in _providers() for m in models]
     trace: list[dict] = []
     tool_results: list[tuple[str, dict]] = []
     model_used = None
@@ -185,8 +197,7 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
         yield {"type": "done", "answer": answer, "trace": trace, "model": "degraded mode (no LLM)",
                "seconds": round(time.time() - t0, 1), "degraded": True}
 
-    global _quota_blocked_until
-    if time.time() < _quota_blocked_until:
+    if all(time.time() < _blocked_until.get(name, 0) for name, _, _ in candidates):
         yield from degraded(quota=True)
         return
 
@@ -196,9 +207,10 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
             if last:  # force a final answer: no tools on the last step
                 messages.append({"role": "user",
                                  "content": "(Tool budget exhausted. Answer now from the results above.)"})
-            model_used, first, it = _stream_completion(client, messages, models, use_tools=not last)
+            cand, first, it = _stream_completion(candidates, messages, use_tools=not last)
+            model_used = cand[2] if cand[0] == "openrouter" else f"{cand[2]} (backup provider)"
             # stick to the model that worked for the rest of this turn
-            models = [model_used] + [m for m in models if m != model_used]
+            candidates = [cand] + [c for c in candidates if c is not cand]
 
             text_parts: list[str] = []
             calls: dict[int, dict] = {}
@@ -280,9 +292,8 @@ def run_agent_stream(question: str, history: list[dict], meta: dict) -> Iterator
                 messages.append({"role": "tool", "tool_call_id": c["id"],
                                  "content": json.dumps(result, ensure_ascii=False)[:12000]})
     except AllModelsFailed as e:
-        quota = _is_quota_error(str(e))
-        if quota:
-            _quota_blocked_until = _next_retry()
+        quota = _is_quota_error(str(e)) or all(
+            time.time() < _blocked_until.get(name, 0) for name, _, _ in candidates)
         log.warning("all models failed (quota=%s): %s", quota, str(e)[:200])
         yield {"type": "discard"}
         yield from degraded(quota)

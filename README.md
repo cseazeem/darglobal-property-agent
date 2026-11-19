@@ -71,7 +71,7 @@ Real-estate questions mix two kinds of query:
 So the model gets typed tools for each case and picks between them. Aggregate questions like *"median price by district"* are computed in code, so the LLM never does arithmetic.
 
 ### Robustness choices
-- **Model fallback chain.** Free models get rate-limited. On a 429 or a provider error, the next model is tried within the same request.
+- **Model fallback chain.** Free models get rate-limited. On a 429 or a provider error, the next model is tried within the same request. Primary models are OpenRouter free models. An optional OpenAI-compatible **backup provider** with its own free tier, such as Groq or Gemini (`BACKUP_*` env vars), takes over only when OpenRouter's free daily quota runs out. A per-provider circuit breaker skips an exhausted provider for 10 minutes.
 - **Bounded loop.** The agent can make at most 6 tool steps. On the last step tools are removed so the model has to answer.
 - **Grounding.** The system prompt requires a tool call before any factual answer, answers only from tool output, and markdown source links. The model must say "I don't know" when the data has no answer.
 - **Data hygiene.** City names are normalised (for example *Aldammam → Dammam*). Arabic articles are made equivalent for matching (*Al-Narjis ≈ An-Narjis*). Statistics use the IQR rule, so typos like a 13.8 billion SAR plot don't skew results.

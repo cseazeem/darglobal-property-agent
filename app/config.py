@@ -26,6 +26,12 @@ OPENROUTER_MODELS = [
     if m.strip()
 ]
 
+# Optional backup provider (any OpenAI-compatible free tier, e.g. Groq or Gemini), used only
+# when OpenRouter's free daily quota is exhausted or it is down.
+BACKUP_BASE_URL = os.getenv("BACKUP_BASE_URL", "")
+BACKUP_API_KEY = os.getenv("BACKUP_API_KEY", "")
+BACKUP_MODELS = [m.strip() for m in os.getenv("BACKUP_MODELS", "").split(",") if m.strip()]
+
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 EMBED_CACHE = os.getenv("EMBED_CACHE", str(ROOT / ".cache" / "fastembed"))
 MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "6"))

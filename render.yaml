@@ -13,3 +13,9 @@ services:
         sync: false          # entered in the Render dashboard, never committed
       - key: OPENROUTER_MODELS
         value: nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free,openrouter/free
+      - key: BACKUP_BASE_URL       # optional free backup provider (e.g. Groq / Gemini)
+        sync: false
+      - key: BACKUP_API_KEY
+        sync: false
+      - key: BACKUP_MODELS
+        sync: false
