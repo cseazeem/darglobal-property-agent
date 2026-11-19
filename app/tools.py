@@ -177,9 +177,23 @@ def wasalt_market_stats(city: str | None = None, purpose: str = "sale",
             "_summary": f"{len(rows)} listings"}
 
 
-def wasalt_rental_yield(city: str, property_type: str = "apartment", group_by: str = "area",
-                        min_listings: int = 2) -> dict:
-    """Gross rental yield = median yearly rent / median sale price, per area or district."""
+def wasalt_rental_yield(city: str | None = None, property_type: str = "apartment",
+                        group_by: str = "area", min_listings: int = 2) -> dict:
+    """Gross rental yield = median yearly rent / median sale price, per area or district.
+    Without a city, ranks all cities in one call (saves agent steps)."""
+    if not city:
+        ranking = {}
+        for c in tools_cities():
+            r = wasalt_rental_yield(c, property_type, group_by, min_listings)
+            if r.get("citywide"):
+                ranking[c] = r["citywide"]
+        ranking = dict(sorted(ranking.items(), key=lambda kv: -kv[1]["gross_yield_pct"]))
+        return {"property_type": property_type, "by_city": ranking,
+                "method": "Gross yield = median yearly asking rent / median asking sale price, outliers "
+                          "and suspicious rents removed.",
+                "disclaimer": "Indicative only, based on a small sample of listings. Not investment advice.",
+                "_summary": f"{len(ranking)} cities ranked"}
+
     def rows(purpose):
         return [l for l in _listings() if _city_match(city, l["city"]) and l["purpose"] == purpose
                 and _norm(property_type).rstrip("s") in _norm(l["type"])
@@ -218,6 +232,10 @@ def wasalt_rental_yield(city: str, property_type: str = "apartment", group_by: s
         "disclaimer": "Indicative only, based on a small sample of listings. Not investment advice.",
         "_summary": f"{len(ranked)} {key}s with enough data",
     }
+
+
+def tools_cities() -> list[str]:
+    return sorted({l["city"] for l in _listings()})
 
 
 # Reference rates (USD per 1 unit). AED/SAR/QAR/OMR/BHD are USD-pegged; GBP as of 18 Nov 2026.
@@ -315,14 +333,13 @@ TOOL_SCHEMAS = [
 TOOL_SCHEMAS += [
     {"type": "function", "function": {
         "name": "wasalt_rental_yield",
-        "description": "Estimate gross rental yield (median yearly rent / median sale price) for a "
-                       "Saudi city from Wasalt listings, ranked by area or district. Use for "
-                       "investment-return or 'where is rent high relative to price' questions.",
+        "description": "Estimate gross rental yield (median yearly rent / median sale price) from "
+                       "Wasalt listings. Omit `city` to rank ALL Saudi cities in one call; pass a city "
+                       "for an area/district breakdown. Use for investment-return questions.",
         "parameters": {"type": "object", "properties": {
-            "city": {"type": "string"},
+            "city": {"type": "string", "description": "Optional. Omit to compare all cities."},
             "property_type": {"type": "string", "description": "Apartment (default), Villa, Floor"},
-            "group_by": {"type": "string", "enum": ["area", "district"]}},
-            "required": ["city"]}}},
+            "group_by": {"type": "string", "enum": ["area", "district"]}}}}},
     {"type": "function", "function": {
         "name": "convert_currency",
         "description": "Convert an amount between AED, SAR, QAR, OMR, BHD, USD and GBP.",

@@ -22,7 +22,7 @@ An **agentic RAG chatbot** over publicly available data from [darglobal.co.uk](h
 - *"3-bed apartments for rent in North Riyadh under 70k SAR"* → `search_wasalt_listings(...)` with structured filters
 - *"Median villa price in Jeddah by district"* → `wasalt_market_stats(...)`, which computes medians and price per sqm after removing outliers
 - *"How is DarGlobal connected to Wasalt?"* → `search_knowledge(...)`, a hybrid RAG search over press releases and other pages
-- *"Which Saudi city has the best apartment rental yield? Show it in AED"* → several `wasalt_rental_yield(...)` calls plus `convert_currency(...)`. Yield is median yearly rent divided by median sale price, computed in code. The answer carries a "not investment advice" disclaimer.
+- *"Which Saudi city has the best apartment rental yield? Show it in AED"* → `wasalt_rental_yield()` with no city, which ranks all seven cities in a single tool call, plus `convert_currency(...)`. Yield is median yearly rent divided by median sale price, computed in code. The answer carries a "not investment advice" disclaimer.
 - *"Register my interest in Trump Tower Jeddah"* → `draft_interest_registration(...)`. This is **human-in-the-loop**: the agent only drafts the request, and nothing is saved until the user presses **Confirm** on the card.
 - Arabic questions get answers in Arabic, shown right-to-left.
 
@@ -82,7 +82,7 @@ So the model gets typed tools for each case and picks between them. Aggregate qu
 
 Evaluation runs at two levels.
 
-**1. Deterministic tests: [`tests/test_tools.py`](tests/test_tools.py), run in CI on every push.** There are 25 tests and none of them call the LLM. They cover:
+**1. Deterministic tests: [`tests/test_tools.py`](tests/test_tools.py), run in CI on every push.** There are 26 tests and none of them call the LLM. They cover:
 - data quality, including that no personal data was collected
 - project-name matching
 - listing filters, and Arabic-article and city-alias normalisation

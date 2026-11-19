@@ -137,3 +137,10 @@ def test_text_tool_call_parsing():
         "<parameter=from_currency>\nSAR\n</parameter>\n</function>\n</tool_call>")
     assert calls[0]["name"] == "convert_currency"
     assert json.loads(calls[0]["args"]) == {"amount": 100, "from_currency": "SAR"}
+
+
+def test_rental_yield_all_cities_in_one_call():
+    r = tools.wasalt_rental_yield()
+    assert len(r["by_city"]) >= 5
+    ylds = [v["gross_yield_pct"] for v in r["by_city"].values()]
+    assert ylds == sorted(ylds, reverse=True)
