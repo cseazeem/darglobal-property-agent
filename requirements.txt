@@ -6,3 +6,4 @@ fastembed==0.9.1
 numpy==2.5.5
 rank-bm25==0.2.2
 python-dotenv==1.2.4
+email-validator==2.4.0

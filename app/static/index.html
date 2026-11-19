@@ -66,6 +66,21 @@
                 padding: 0 18px; font: 600 14px Inter, sans-serif; cursor: pointer; }
   button.send:disabled { opacity: .5; cursor: default; }
   .foot { color: var(--muted); font-size: 11px; text-align: center; padding-bottom: 10px; margin-top: -10px; }
+  .steps { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .steps:empty { display: none; }
+  .live-step { display: flex; gap: 8px; align-items: baseline; margin: 3px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .live-step .ic { width: 16px; text-align: center; }
+  .live-step.run .ic::after { content: "◌"; display: inline-block; animation: spin 1s linear infinite; }
+  .live-step.ok .ic::after { content: "✓"; color: var(--accent); }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .lead { margin-top: 10px; border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; }
+  .lead h4 { margin: 0 0 6px; font-size: 14px; }
+  .lead dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0 0 10px; font-size: 13px; }
+  .lead dt { color: var(--muted); } .lead dd { margin: 0; overflow-wrap: anywhere; }
+  .lead .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .lead button { border-radius: 10px; padding: 7px 14px; font: 600 13px Inter, sans-serif; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .lead button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .lead .small { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
   @media (max-width: 520px) { h1 { font-size: 20px; } .bubble { max-width: 96%; } }
 </style>
 </head>
@@ -95,8 +110,20 @@ const SUGGESTIONS = [
   "Compare The Astera and Da Vinci Tower",
   "Find 3-bedroom apartments for rent in Riyadh under 70,000 SAR",
   "What is the median villa price in Jeddah by district?",
+  "Which Saudi city has the best apartment rental yield? Show prices in AED too",
+  "I'd like to register interest in Trump Tower Jeddah",
   "ما هي مشاريع دار جلوبال في عُمان؟",
 ];
+const TOOL_LABEL = {
+  search_knowledge: '🔎 Searching DarGlobal & Wasalt knowledge base',
+  list_darglobal_projects: '🏙️ Listing DarGlobal projects',
+  get_darglobal_project: '📄 Reading project details',
+  search_wasalt_listings: '🏠 Filtering Wasalt listings',
+  wasalt_market_stats: '📊 Computing market statistics',
+  wasalt_rental_yield: '📈 Estimating rental yields',
+  convert_currency: '💱 Converting currency',
+  draft_interest_registration: '📝 Drafting interest registration',
+};
 const chat = document.getElementById('chat'), form = document.getElementById('form'),
       input = document.getElementById('input'), send = document.getElementById('send');
 const history = [];
@@ -106,6 +133,7 @@ function scroll() { chat.scrollTop = chat.scrollHeight; }
 function add(role, html) {
   const m = document.createElement('div'); m.className = 'msg ' + role;
   const b = document.createElement('div'); b.className = 'bubble'; b.innerHTML = html;
+  if (role === 'user') b.setAttribute('dir', 'auto');  // Arabic questions render right-to-left
   m.appendChild(b); chat.appendChild(m); scroll(); return b;
 }
 function render(md) {
@@ -121,20 +149,75 @@ function traceHtml(r) {
   return `<details class="trace"><summary>Agent trace · ${r.trace.length} tool call${r.trace.length > 1 ? 's' : ''} · ${esc(r.model || '')} · ${r.seconds ?? '?'}s</summary>${steps}</details>`;
 }
 
+function leadCard(d) {
+  const rows = [['Project', d.project], ['Name', d.name], ['Email', d.email], ['Phone', d.phone],
+                ['Budget', d.budget], ['Preferred contact', d.preferred_contact], ['Notes', d.notes]]
+    .filter(r => r[1]).map(r => `<dt>${esc(r[0])}</dt><dd>${esc(String(r[1]))}</dd>`).join('');
+  const box = document.createElement('div'); box.className = 'lead';
+  box.innerHTML = `<h4>📝 Review your interest registration</h4><dl>${rows}</dl>
+    <div class="btns"><button class="primary">Confirm</button><button>Cancel</button></div>
+    <div class="small">Nothing is saved until you confirm. Demo only — not sent to DarGlobal.</div>`;
+  const [ok, cancel] = box.querySelectorAll('button');
+  cancel.onclick = () => { box.innerHTML = '<div class="small">Cancelled — nothing was saved.</div>'; };
+  ok.onclick = async () => {
+    ok.disabled = cancel.disabled = true;
+    try {
+      const r = await fetch('/api/leads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(typeof j.detail === 'string' ? j.detail : 'Please check the details.');
+      box.innerHTML = `<h4>✅ Recorded — reference ${esc(j.reference)}</h4><div class="small">${esc(j.note)}</div>`;
+    } catch (e) { ok.disabled = cancel.disabled = false; box.querySelector('.small').textContent = '⚠️ ' + e.message; }
+  };
+  return box;
+}
+
 async function ask(text) {
   text = text.trim(); if (!text) return;
   add('user', esc(text)); input.value = ''; input.style.height = '';
   send.disabled = true;
-  const pending = add('bot', '<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Thinking & calling tools…</span>');
+  const bubble = add('bot', '');
+  const steps = document.createElement('div'); steps.className = 'steps';
+  const body = document.createElement('div'); body.setAttribute('dir', 'auto');
+  body.innerHTML = '<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Planning…</span>';
+  bubble.append(steps, body);
+  let answer = '', started = false, raf = null, lead = null, done = null;
+  const paint = () => { raf = null; body.innerHTML = render(answer); scroll(); };
+  const handle = ev => {
+    if (ev.type === 'step') {
+      const s = document.createElement('div'); s.className = 'live-step run'; s.dataset.tool = ev.tool;
+      s.innerHTML = `<span class="ic"></span><span>${esc(TOOL_LABEL[ev.tool] || ev.tool)}…</span>`;
+      steps.appendChild(s); scroll();
+    } else if (ev.type === 'step_done') {
+      const s = [...steps.querySelectorAll('.live-step.run')].find(x => x.dataset.tool === ev.tool);
+      if (s) { s.className = 'live-step ok'; s.lastChild.textContent = `${TOOL_LABEL[ev.tool] || ev.tool} → ${ev.summary}`; }
+      if (!started) body.innerHTML = '<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Writing answer…</span>';
+    } else if (ev.type === 'token') {
+      started = true; answer += ev.text; if (!raf) raf = requestAnimationFrame(paint);
+    } else if (ev.type === 'discard') {
+      answer = ''; started = false;
+    } else if (ev.type === 'lead_draft') { lead = ev.draft;
+    } else if (ev.type === 'done') { done = ev;
+    } else if (ev.type === 'error') { throw new Error(ev.message); }
+  };
   try {
-    const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                           body: JSON.stringify({ message: text, history }) });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || res.statusText);
-    pending.innerHTML = render(data.answer) + traceHtml(data);
-    history.push({ role: 'user', content: text }, { role: 'assistant', content: data.answer });
+    const res = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify({ message: text, history }) });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || res.statusText); }
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const { value, done: end } = await reader.read(); if (end) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) handle(JSON.parse(line)); }
+    }
+    if (buf.trim()) handle(JSON.parse(buf));
+    if (!done) throw new Error('The connection closed early. Please retry.');
+    answer = done.answer; paint();
+    steps.remove();
+    const t = document.createElement('div'); t.innerHTML = traceHtml(done); if (t.firstChild) bubble.appendChild(t.firstChild);
+    if (lead) bubble.appendChild(leadCard(lead));
+    history.push({ role: 'user', content: text }, { role: 'assistant', content: done.answer });
   } catch (e) {
-    pending.innerHTML = `<span style="color:#b4442f">⚠️ ${esc(e.message)}</span>`;
+    body.innerHTML = `<span style="color:#b4442f">⚠️ ${esc(e.message)}</span>`;
   } finally { send.disabled = false; input.focus(); scroll(); }
 }
 

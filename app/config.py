@@ -28,7 +28,8 @@ OPENROUTER_MODELS = [
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 EMBED_CACHE = os.getenv("EMBED_CACHE", str(ROOT / ".cache" / "fastembed"))
-MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "5"))
+MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "6"))
+LEADS_DB = os.getenv("LEADS_DB", str(ROOT / "data" / "leads.db"))
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "10"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "60"))
 

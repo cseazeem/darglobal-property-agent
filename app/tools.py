@@ -177,6 +177,87 @@ def wasalt_market_stats(city: str | None = None, purpose: str = "sale",
             "_summary": f"{len(rows)} listings"}
 
 
+def wasalt_rental_yield(city: str, property_type: str = "apartment", group_by: str = "area",
+                        min_listings: int = 2) -> dict:
+    """Gross rental yield = median yearly rent / median sale price, per area or district."""
+    def rows(purpose):
+        return [l for l in _listings() if _city_match(city, l["city"]) and l["purpose"] == purpose
+                and _norm(property_type).rstrip("s") in _norm(l["type"])
+                and not l.get("price_note")
+                and (purpose == "sale" or (l.get("rent_period") or "yearly") == "yearly")]
+
+    sale, rent = rows("sale"), rows("rent")
+    if not sale or not rent:
+        return {"error": f"Not enough {property_type} sale and rent listings in {city} to estimate a yield.",
+                "_summary": "insufficient data"}
+
+    def yield_of(s, r):
+        ps, pr = _trimmed([x["price_sar"] for x in s]), _trimmed([x["price_sar"] for x in r])
+        if not ps or not pr:
+            return None
+        ms, mr = statistics.median(ps), statistics.median(pr)
+        return {"median_sale_price_sar": round(ms), "median_yearly_rent_sar": round(mr),
+                "gross_yield_pct": round(100 * mr / ms, 2),
+                "sale_listings": len(s), "rent_listings": len(r)}
+
+    key = "district" if group_by == "district" else "area"
+    groups = {}
+    for name in {x[key] for x in sale if x[key]} & {x[key] for x in rent if x[key]}:
+        s = [x for x in sale if x[key] == name]
+        r = [x for x in rent if x[key] == name]
+        if len(s) >= min_listings and len(r) >= min_listings:
+            y = yield_of(s, r)
+            if y:
+                groups[name] = y
+    ranked = dict(sorted(groups.items(), key=lambda kv: -kv[1]["gross_yield_pct"]))
+    return {
+        "city": city, "property_type": property_type,
+        "citywide": yield_of(sale, rent), "by_" + key: ranked,
+        "method": "Gross yield = median yearly asking rent / median asking sale price, outliers and "
+                  "suspicious rents removed. Does not account for bedrooms, size, fees, vacancy or taxes.",
+        "disclaimer": "Indicative only, based on a small sample of listings. Not investment advice.",
+        "_summary": f"{len(ranked)} {key}s with enough data",
+    }
+
+
+# Reference rates (USD per 1 unit). AED/SAR/QAR/OMR/BHD are USD-pegged; GBP as of 18 Nov 2026.
+_USD_PER = {"USD": 1.0, "AED": 1 / 3.6725, "SAR": 1 / 3.75, "QAR": 1 / 3.64, "OMR": 1 / 0.3845,
+            "BHD": 1 / 0.376, "GBP": 4.85 / 3.6725}
+
+
+def convert_currency(amount: float, from_currency: str, to_currency: str) -> dict:
+    f, t = from_currency.upper().strip(), to_currency.upper().strip()
+    if f not in _USD_PER or t not in _USD_PER:
+        return {"error": f"Supported currencies: {', '.join(_USD_PER)}", "_summary": "unsupported"}
+    value = float(amount) * _USD_PER[f] / _USD_PER[t]
+    return {"amount": amount, "from": f, "to": t, "converted": round(value, 2),
+            "rate": round(_USD_PER[f] / _USD_PER[t], 4),
+            "note": "Gulf currencies are pegged to USD; GBP rate is indicative (18 Nov 2026).",
+            "_summary": f"{amount:,.0f} {f} ≈ {value:,.0f} {t}"}
+
+
+def draft_interest_registration(project: str, name: str, email: str | None = None,
+                                phone: str | None = None, budget: str | None = None,
+                                preferred_contact: str | None = None,
+                                notes: str | None = None) -> dict:
+    """Human-in-the-loop: build a DRAFT only. Nothing is stored until the user confirms in the UI."""
+    import re
+    if not (email or phone):
+        return {"error": "Ask the user for an email or phone number first.", "_summary": "missing contact"}
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email.strip()):
+        return {"error": "That email address looks invalid; ask the user to re-check it.",
+                "_summary": "invalid email"}
+    match = get_darglobal_project(project)
+    proj = match.get("project", {})
+    draft = {"project": proj.get("name") or project, "project_url": proj.get("url"),
+             "name": name.strip(), "email": (email or "").strip() or None,
+             "phone": (phone or "").strip() or None, "budget": budget,
+             "preferred_contact": preferred_contact, "notes": notes}
+    return {"status": "awaiting_user_confirmation", "draft": draft,
+            "instruction": "Tell the user to review the confirmation card shown below this message and press Confirm. This is a demo: confirmed requests are stored by this app, NOT sent to DarGlobal. Never say it will be submitted or sent to DarGlobal.",
+            "_summary": f"draft for {draft['project']}"}
+
+
 # --------------------------------------------------------------------------- schemas
 
 TOOL_SCHEMAS = [
@@ -231,7 +312,41 @@ TOOL_SCHEMAS = [
             "required": ["purpose"]}}},
 ]
 
+TOOL_SCHEMAS += [
+    {"type": "function", "function": {
+        "name": "wasalt_rental_yield",
+        "description": "Estimate gross rental yield (median yearly rent / median sale price) for a "
+                       "Saudi city from Wasalt listings, ranked by area or district. Use for "
+                       "investment-return or 'where is rent high relative to price' questions.",
+        "parameters": {"type": "object", "properties": {
+            "city": {"type": "string"},
+            "property_type": {"type": "string", "description": "Apartment (default), Villa, Floor"},
+            "group_by": {"type": "string", "enum": ["area", "district"]}},
+            "required": ["city"]}}},
+    {"type": "function", "function": {
+        "name": "convert_currency",
+        "description": "Convert an amount between AED, SAR, QAR, OMR, BHD, USD and GBP.",
+        "parameters": {"type": "object", "properties": {
+            "amount": {"type": "number"}, "from_currency": {"type": "string"},
+            "to_currency": {"type": "string"}},
+            "required": ["amount", "from_currency", "to_currency"]}}},
+    {"type": "function", "function": {
+        "name": "draft_interest_registration",
+        "description": "Create a DRAFT 'register interest' request for a DarGlobal project once you "
+                       "have the project, the person's name and an email or phone. The user must "
+                       "confirm it in the UI; this tool does not submit anything.",
+        "parameters": {"type": "object", "properties": {
+            "project": {"type": "string"}, "name": {"type": "string"},
+            "email": {"type": "string"}, "phone": {"type": "string"},
+            "budget": {"type": "string"}, "preferred_contact": {"type": "string"},
+            "notes": {"type": "string"}},
+            "required": ["project", "name"]}}},
+]
+
 _IMPL = {
+    "wasalt_rental_yield": wasalt_rental_yield,
+    "convert_currency": convert_currency,
+    "draft_interest_registration": draft_interest_registration,
     "search_knowledge": search_knowledge,
     "list_darglobal_projects": list_darglobal_projects,
     "get_darglobal_project": get_darglobal_project,

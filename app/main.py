@@ -1,17 +1,20 @@
 """FastAPI entrypoint: serves the chat UI and the agent API."""
 from __future__ import annotations
 
+import json
 import logging
+import sqlite3
 import time
+import uuid
 from collections import defaultdict, deque
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from . import config
-from .agent import run_agent
+from .agent import run_agent, run_agent_stream
 from .retriever import get_retriever
 from .tools import meta
 
@@ -37,11 +40,45 @@ class ChatRequest(BaseModel):
     history: list[Message] = []
 
 
+class Lead(BaseModel):
+    project: str = Field(min_length=1, max_length=200)
+    project_url: str | None = None
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=40)
+    budget: str | None = Field(default=None, max_length=120)
+    preferred_contact: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+def _db() -> sqlite3.Connection:
+    con = sqlite3.connect(config.LEADS_DB)
+    con.execute("""CREATE TABLE IF NOT EXISTS leads (
+        ref TEXT PRIMARY KEY, created REAL, project TEXT, project_url TEXT, name TEXT,
+        email TEXT, phone TEXT, budget TEXT, preferred_contact TEXT, notes TEXT)""")
+    return con
+
+
+def _client_ip(request: Request) -> str:
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "?")
+    return ip.split(",")[0].strip()
+
+
+def _rate_limit(request: Request) -> None:
+    q, now = _hits[_client_ip(request)], time.time()
+    while q and now - q[0] > WINDOW:
+        q.popleft()
+    if len(q) >= RATE_LIMIT:
+        raise HTTPException(429, "Too many requests — please wait a minute.")
+    q.append(now)
+
+
 @app.on_event("startup")
 def warm_up():
     t0 = time.time()
     r = get_retriever()
     r.search("warm up", k=1)  # loads the embedding model once
+    _db().close()
     log.info("Retriever ready: %d chunks in %.1fs; models=%s",
              len(r.chunks), time.time() - t0, config.OPENROUTER_MODELS)
 
@@ -65,16 +102,40 @@ def get_meta():
 
 @app.post("/api/chat")
 def chat(req: ChatRequest, request: Request):
-    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "?")
-    ip = ip.split(",")[0].strip()
-    q, now = _hits[ip], time.time()
-    while q and now - q[0] > WINDOW:
-        q.popleft()
-    if len(q) >= RATE_LIMIT:
-        raise HTTPException(429, "Too many requests — please wait a minute.")
-    q.append(now)
+    _rate_limit(request)
     try:
         return run_agent(req.message, [m.model_dump() for m in req.history], meta())
     except Exception as e:
         log.exception("agent failed")
-        raise HTTPException(502, f"The language model is unavailable right now ({e}). Please retry.")
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/chat/stream")
+def chat_stream(req: ChatRequest, request: Request):
+    """Newline-delimited JSON events: step / step_done / token / discard / lead_draft / done / error."""
+    _rate_limit(request)
+    history = [m.model_dump() for m in req.history]
+
+    def gen():
+        for ev in run_agent_stream(req.message, history, meta()):
+            yield json.dumps(ev, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/leads")
+def confirm_lead(lead: Lead, request: Request):
+    """Called only when the user presses Confirm on the draft card (human-in-the-loop)."""
+    _rate_limit(request)
+    if not (lead.email or lead.phone):
+        raise HTTPException(422, "An email or phone number is required.")
+    ref = "DG-" + uuid.uuid4().hex[:8].upper()
+    with _db() as con:
+        con.execute("INSERT INTO leads VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (ref, time.time(), lead.project, lead.project_url, lead.name,
+                     str(lead.email) if lead.email else None, lead.phone, lead.budget,
+                     lead.preferred_contact, lead.notes))
+    log.info("lead %s stored for project=%s", ref, lead.project)  # no PII in logs
+    return {"reference": ref, "status": "recorded",
+            "note": "Demo only: stored in this app's database, not sent to DarGlobal."}
